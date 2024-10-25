@@ -1,2 +1,6 @@
 .venv/
 /Recommender/Data
+.DS_Store
+__pycache__/
+/Recommender/Recommender-Code/temp.py
+*.pkl
