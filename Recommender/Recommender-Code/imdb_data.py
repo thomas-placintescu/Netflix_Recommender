@@ -125,7 +125,7 @@ class IMDBDataCollector:
             movies = self.ia.search_movie(movie_name)
             for movie in movies:
                 # Check if the release year matches
-                if movie.get('year') == year:
+                if movie['year'] == year and movie['title'] == movie_name:
                     movie_id = movie.movieID
                     movie_details = self.ia.get_movie(movie_id)
                     # Build a dictionary with relevant movie data
@@ -140,18 +140,22 @@ class IMDBDataCollector:
                     }
         except Exception as e:
             # Handle exceptions (e.g., network errors, data parsing issues)
-            print(f"Error fetching {movie_name} ({year}): {e}")
+            print(f"Error fetching {movie_name}, ({year}): {e}")
 
         return None # Return None if movie not found or an error occurred
     
     def get_imdb(self, movies_df: pd.DataFrame, batch_size: int=30, max_num_batches: int = 1e7):
         """
-        Concurrently retrieves IMDb data for movies listed in a DataFrame.
+        Concurrently retrieves IMDb data for movies listed in a DataFrame in batches.
 
         Parameters
         ----------
         movies_df : pandas.DataFrame
             DataFrame containing 'Title' and 'ReleaseYear' columns for movies to search on IMDb.
+        batch_size : int
+            Integer containing the size of batches for ThreadPoolExecuter to fetch data.
+        max_num_batches: int
+            maximum number of batches to search to run.
 
         Notes
         -----
@@ -162,13 +166,17 @@ class IMDBDataCollector:
         # Use ThreadPoolExecutor to fetch data concurrently - set max workers to 10 so that IMDb is not overloaded
         batch_start_index = 0
         batch_counter = 0
+
         while batch_counter < max_num_batches and batch_start_index < len(movies_df['Title']) - batch_size:
             with ThreadPoolExecutor(max_workers=10) as executor:
                 # Map each future to its corresponding movie title and year
+                batch_titles = movies_df['Title'].iloc[batch_start_index:batch_start_index + batch_size]
+                batch_years = movies_df['ReleaseYear'].iloc[batch_start_index:batch_start_index + batch_size]
+
                 futures = {executor.submit(self.fetch_movie_data, movie_name, year):
                            (movie_name, year) for movie_name, year in zip(
-                                movies_df['Title'].iloc[batch_start_index:batch_start_index + batch_size],
-                                movies_df['ReleaseYear'].iloc[batch_start_index:batch_start_index + batch_size])}
+                                batch_titles,
+                                batch_years)}
                 # Process completed futures as they become available
                 for future in as_completed(futures):
                     movie_name, year = futures[future]  # Retrieve the original movie name and year
@@ -176,7 +184,7 @@ class IMDBDataCollector:
                         result = future.result()  # Get the result of the future
                         if result:
                             self.imdb_info.append(result)  # Append the movie data to imdb_info
-                            print(f"Movies Found: {len(self.imdb_info)/ len(movies_df['Title'])}")  # Progress update
+                            print(f"Movies Found: {len(self.imdb_info)}/{len(movies_df['Title'])}")  # Progress update
                     except Exception as e:
                         # Handle exceptions that occurred during data fetching
                         print(f"Error processing {movie_name} ({year}): {e}")
@@ -186,40 +194,6 @@ class IMDBDataCollector:
                 print(f"Reached max num batches {max_num_batches}, so aborting")
                 break
 
-    def get_imdb_non_batched(self, movies_df: pd.DataFrame, limit_download: int = 1e7):
-        """
-        Concurrently retrieves IMDb data for movies listed in a DataFrame.
-
-        Parameters
-        ----------
-        movies_df : pandas.DataFrame
-            DataFrame containing 'Title' and 'ReleaseYear' columns for movies to search on IMDb.
-
-        Notes
-        -----
-        - Uses ThreadPoolExecutor to fetch data concurrently.
-        - Updates the imdb_info list with data for each found movie.
-        - Prints progress updates showing the number of movies found.
-        """
-        # Use ThreadPoolExecutor to fetch data concurrently - set max workers to 10 so that imdb not overloaded
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            # Map each future to its corresponding movie title and year
-            futures = {
-                executor.submit(self.fetch_movie_data, movie_name, year): (movie_name, year)
-                for movie_name, year in zip(movies_df['Title'].iloc[:limit_download], 
-                                            movies_df['ReleaseYear'].iloc[:limit_download])
-            }
-            # Process completed futures as they become available
-            for future in as_completed(futures):
-                movie_name, year = futures[future]  # Retrieve the original movie name and year
-                try:
-                    result = future.result()  # Get the result of the future
-                    if result:
-                        self.imdb_info.append(result)  # Append the movie data to imdb_info
-                        print(f"Movies Found: {len(self.imdb_info)} / {len(movies_df)}")  # Progress update
-                except Exception as e:
-                    # Handle exceptions that occurred during data fetching
-                    print(f"Error processing {movie_name} ({year}): {e}")
 
 if __name__ == "__main__":
 
@@ -232,8 +206,8 @@ if __name__ == "__main__":
     #movie_titles.head()
 
     collector = IMDBDataCollector()
-    collector.get_imdb(movie_titles, max_num_batches = 3)
-    print(collector.imdb_info)
+    collector.get_imdb(movie_titles, max_num_batches = 10)
+    #print(collector.imdb_info)
     # Save results
     with open('imdb_info.pkl', 'wb') as f:
         pickle.dump(collector.imdb_info, f)
